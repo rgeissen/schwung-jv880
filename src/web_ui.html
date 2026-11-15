@@ -565,7 +565,7 @@
       (function(idx){
         var b=el("div","tab"); b.id="tab"+idx;
         b.innerHTML = "Tone "+(idx+1)+' <span class="tag muted"></span>';
-        b.onclick=function(){ selectTone(idx); };
+        b.onclick=function(){ selectTone(idx); showOnHost("tone"+(idx+1)); };
         tabs.appendChild(b);
       })(t);
     }
@@ -651,7 +651,7 @@
         var mini=el("div","mini");
         ["level","pan"].forEach(function(s){ var c=makeControl(pre+s); if(c){c.style.minWidth="0";c.style.flex="1";mini.appendChild(c);} });
         card.appendChild(mini);
-        card.onclick=function(){ selectTone(idx); };
+        card.onclick=function(){ selectTone(idx); showOnHost("tone"+(idx+1)); };
         host.appendChild(card);
       })(t);
     }
@@ -855,6 +855,27 @@
   }
 
   boot();
+  // ===================================================================
+  // Compartments: a host that shows this module on a hardware screen (Pung
+  // on Push) names the screen's sections macros, common, fx, tone1..tone4.
+  // It sends {type:"compartment", id} when its screen (or its own tabs)
+  // turns to one, and this page goes there; a tone chosen here is sent back
+  // as {type:"showCompartment", id}, so the screen follows. A host that
+  // sends neither (schwung-manager) is unaffected.
+  // ===================================================================
+  var SECTION = { macros: "macros", common: "controlPanel", fx: "fxPanel" };
+  function showOnHost(id){
+    if (window.parent && window.parent !== window) window.parent.postMessage({ type: "showCompartment", id: id }, "*");
+  }
+  window.addEventListener("message", function(e){
+    var m = e.data;
+    if (e.source !== window.parent || !m || m.type !== "compartment" || typeof m.id !== "string") return;
+    var tone = /^tone([1-4])$/.exec(m.id), target = null;
+    if (tone) { selectTone(+tone[1] - 1); target = document.getElementById("tonePanel"); }
+    else if (SECTION[m.id]) target = document.getElementById(SECTION[m.id]);
+    // this page's own scroll only: the host places the panel in its page
+    if (target) window.scrollTo({ top: target.getBoundingClientRect().top + window.scrollY - 8, behavior: "smooth" });
+  });
 })();
 </script>
 </body>
