@@ -574,6 +574,7 @@
     buildLinkToggle();
 
     selectTone(0);
+    if (enabledComps) showOnly(enabledComps); // a host's choice that came before the page was built
   }
 
   // The subtractive-link toggle. Bound to the device's link_tones param: turning
@@ -864,12 +865,42 @@
   // sends neither (schwung-manager) is unaffected.
   // ===================================================================
   var SECTION = { macros: "macros", common: "controlPanel", fx: "fxPanel" };
+  // {type:"compartments", enabled:[ids]}: the host shows only these (its
+  // pills); a tone off hides its card and tab, the Tone Editor stays on a
+  // tone that is on, and no tone on hides both.
+  var enabledComps = null;
+  function showOnly(ids){
+    enabledComps = ids;
+    var on = {};
+    ids.forEach(function(i){ on[i] = true; });
+    Object.keys(SECTION).forEach(function(k){
+      var e = document.getElementById(SECTION[k]);
+      if (e) e.style.display = on[k] ? "" : "none";
+    });
+    var anyTone = false;
+    for (var t = 0; t < 4; t++){
+      var v = !!on["tone" + (t + 1)];
+      anyTone = anyTone || v;
+      var tab = document.getElementById("tab" + t), card = document.getElementById("tcard" + t);
+      if (tab) tab.style.display = v ? "" : "none";
+      if (card) card.style.display = v ? "" : "none";
+    }
+    var tones = document.getElementById("tones");
+    if (tones && tones.parentElement) tones.parentElement.style.display = anyTone ? "" : "none";
+    var editor = document.getElementById("tonePanel");
+    if (editor) editor.style.display = anyTone ? "" : "none";
+    if (anyTone && !on["tone" + ((state.activeTone || 0) + 1)]){
+      for (t = 0; t < 4; t++) if (on["tone" + (t + 1)]) { selectTone(t); break; }
+    }
+  }
   function showOnHost(id){
     if (window.parent && window.parent !== window) window.parent.postMessage({ type: "showCompartment", id: id }, "*");
   }
   window.addEventListener("message", function(e){
     var m = e.data;
-    if (e.source !== window.parent || !m || m.type !== "compartment" || typeof m.id !== "string") return;
+    if (e.source !== window.parent || !m) return;
+    if (m.type === "compartments" && Array.isArray(m.enabled)) { showOnly(m.enabled); return; }
+    if (m.type !== "compartment" || typeof m.id !== "string") return;
     var tone = /^tone([1-4])$/.exec(m.id), target = null;
     if (tone) { selectTone(+tone[1] - 1); target = document.getElementById("tonePanel"); }
     else if (SECTION[m.id]) target = document.getElementById(SECTION[m.id]);
