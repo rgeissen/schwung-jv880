@@ -76,6 +76,12 @@
 
   /* ---- Macros (rotary knobs) ----------------------------------------- */
   #macros .row{gap:14px;justify-content:flex-start}
+  /* ---- Voices, live (the host streams the chip's state: live_voices) --- */
+  .voices{margin-top:12px;border-top:1px solid var(--edge);padding-top:10px}
+  .voices .vhead,.voices .vfoot{display:flex;justify-content:space-between;font-size:11px;letter-spacing:.04em}
+  .voices .vhead{text-transform:uppercase;color:var(--dim);margin-bottom:6px}
+  .voices canvas{display:block;width:100%;height:96px;background:var(--panel2);border-radius:6px}
+  .voices .vfoot{margin-top:4px}
   #masterStack{display:flex;flex-direction:column;gap:8px}
   .knob{align-items:center;min-width:64px}
   .knob > label{text-align:center;max-width:66px}
@@ -173,6 +179,11 @@
     <section class="panel" id="macros">
       <h2>Macros · offset all tones</h2>
       <div class="fillrow" id="macroRow"></div>
+      <div class="voices hidden" id="voices">
+        <div class="vhead"><span>Voices, live</span><span class="muted" id="voiceCount"></span></div>
+        <canvas id="voiceCanvas" height="96" role="img" aria-label="The chip's voices: level and filter cutoff of each"></canvas>
+        <div class="vfoot muted"><span>level of each of the 28 voices</span><span>TVF cutoff of each, low to high</span></div>
+      </div>
     </section>
 
     <section class="panel" id="controlPanel">
@@ -896,7 +907,66 @@
   function showOnHost(id){
     if (window.parent && window.parent !== window) window.parent.postMessage({ type: "showCompartment", id: id }, "*");
   }
+  // ===================================================================
+  // Voices, live: a host that streams the sound (Pung: {type:"live",
+  // frame}) sends the chip's own state as live_voices; each voice's level
+  // (dB) as a bar, and its TVF cutoff as a mark on one axis below. Nothing
+  // is estimated; with no stream the panel stays hidden.
+  // ===================================================================
+  var liveLast = 0, liveFrame = null;
+  function liveVoices(f){
+    var raw = f && f.keys ? (f.keys[PREFIX + "live_voices"] || f.keys["synth:live_voices"]) : null;
+    if (!raw || (raw.indexOf("v2 ") !== 0 && raw.indexOf("v1 ") !== 0)) return null;
+    var w = raw.indexOf("v2 ") === 0 ? 15 : 11, out = [];
+    for (var i = 3; i + w <= raw.length; i += w) {
+      var amp = parseInt(raw.substr(i, 4), 16) / 65535;
+      var cut = parseInt(raw.substr(i + (w === 15 ? 8 : 4), 4), 16);
+      out.push({ amp: amp, cut: cut });
+    }
+    return out;
+  }
+  function drawVoices(){
+    var box = document.getElementById("voices"), cv = document.getElementById("voiceCanvas");
+    if (!box || !cv) return;
+    var vs = liveVoices(liveFrame);
+    if (!vs) { box.classList.add("hidden"); return; }
+    box.classList.remove("hidden");
+    var dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = 96;
+    if (cv.width !== Math.round(W * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+    var c = cv.getContext("2d"), css = getComputedStyle(document.documentElement);
+    var live = css.getPropertyValue("--accent2").trim() || "#4db1ff", grid = css.getPropertyValue("--grid").trim() || "#2a2f38";
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.clearRect(0, 0, W, H);
+    var n = vs.length, cw = (W - 16) / n, top = 8, bh = 52, axisY = 80, sounding = 0;
+    c.fillStyle = grid;
+    c.fillRect(8, top + bh, W - 16, 1);
+    c.fillRect(8, axisY, W - 16, 1);
+    for (var i = 0; i < n; i++) {
+      var a = vs[i].amp;
+      if (a <= 0.0005) continue;
+      sounding++;
+      var db = 20 * Math.log(a) / Math.LN10, fr = Math.max(0, Math.min(1, (db + 48) / 48));
+      c.fillStyle = live;
+      c.globalAlpha = 0.35 + 0.65 * fr;
+      c.fillRect(8 + i * cw + 2, top + bh - fr * bh, Math.max(2, cw - 4), fr * bh);
+      var u = Math.max(0, Math.min(1, (Math.log(Math.max(1, vs[i].cut)) / Math.LN2 - 6) / 9));
+      c.globalAlpha = 1;
+      c.fillRect(8 + u * (W - 16) - 1.5, axisY - 6, 3, 12);
+    }
+    c.globalAlpha = 1;
+    document.getElementById("voiceCount").textContent = sounding + " of " + n + " sounding";
+  }
+  setInterval(function(){ // the stream stopped (page hidden, panel closed): say nothing rather than something stale
+    if (liveFrame && Date.now() - liveLast > 1500) { liveFrame = null; drawVoices(); }
+  }, 500);
+
   window.addEventListener("message", function(e){
+    var lm = e.data;
+    if (lm && lm.type === "live" && lm.frame) {
+      liveFrame = lm.frame; liveLast = Date.now();
+      if (!drawVoices.pending) { drawVoices.pending = true; requestAnimationFrame(function(){ drawVoices.pending = false; drawVoices(); }); }
+      return;
+    }
     var m = e.data;
     if (e.source !== window.parent || !m) return;
     if (m.type === "compartments" && Array.isArray(m.enabled)) { showOnly(m.enabled); return; }

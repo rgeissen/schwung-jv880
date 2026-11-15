@@ -4054,34 +4054,38 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
      * runs on the SPI callback. */
     /* "live_voices": what each of the PCM chip's voices is doing now, for a
      * live picture of the sound (Pung). Read straight from the emulated
-     * chip, so it is the instrument's own state: the two TVA stages a voice
-     * is multiplied by (the firmware's envelope and its LFO, as they run) and
-     * its TVF coefficient. "v1 " then, per voice, 11 hex digits:
+     * chip, so it is the instrument's own state. Measured on the device
+     * (live_voices_raw, 2026-11-15): ram2[10] is the TVA ENVELOPE, on the
+     * scale of the patch's own levels (L 127 = 0x7f80, a stage's ramp runs
+     * there as the firmware drives it), ram2[9] the voice's static level,
+     * ram2[11] the TVF coefficient. "v2 " then, per voice, 15 hex digits:
      *   AAAA  amplitude, (tva1/32767)*(tva2/32767) * 65535
-     *   CCCC  the filter's coefficient (ram2[11], 15 bits)
+     *   EEEE  the TVA envelope, ram2[10] (15 bits)
+     *   CCCC  the filter's coefficient, ram2[11] (15 bits)
      *   PP    pan, 0 left .. 255 right (from the voice's two pan gains)
-     *   F     1: keyed (the voice is sounding)
+     *   F     1: sounding (either TVA stage is above zero; the chip's key
+     *         mask is set for every slot, so it says nothing)
      * No allocation, no locks: a torn read draws one frame a little wrong. */
     if (strcmp(key, "live_voices") == 0) {
         if (!inst->mcu || !inst->loading_complete) return -1;
         const pcm_t &pc = inst->mcu->pcm.pcm;
         int slots = (pc.config_reg_3d & 31) + 1;
-        uint32_t keyed = pc.voice_mask & pc.voice_mask_pending;
-        if (buf_len < 4 + slots * 11 + 1) return -1;
+        if (buf_len < 4 + slots * 15 + 1) return -1;
         static const char hx[] = "0123456789abcdef";
         char *o = buf;
-        *o++ = 'v'; *o++ = '1'; *o++ = ' ';
+        *o++ = 'v'; *o++ = '2'; *o++ = ' ';
         for (int sl = 0; sl < slots; sl++) {
             const uint16_t *r = pc.ram2[sl];
-            uint32_t a = (uint32_t)(((uint64_t)(r[9] & 0x7fff) * (r[10] & 0x7fff) * 65535u) / (32767ull * 32767ull));
+            uint32_t t1 = r[9] & 0x7fff, t2 = r[10] & 0x7fff;
+            uint32_t a = (uint32_t)(((uint64_t)t1 * t2 * 65535u) / (32767ull * 32767ull));
             if (a > 65535) a = 65535;
             uint32_t c = r[11] & 0x7fff;
             uint32_t pl = (r[1] >> 8) & 255, pr = r[1] & 255;
             uint32_t pan = pl + pr ? (pr * 255) / (pl + pr) : 128;
-            uint32_t f = (keyed >> sl) & 1;
-            uint32_t v[4] = {a, c, pan, f};
-            int w[4] = {4, 4, 2, 1};
-            for (int k = 0; k < 4; k++)
+            uint32_t f = (t1 | t2) ? 1 : 0;
+            uint32_t v[5] = {a, t2, c, pan, f};
+            int w[5] = {4, 4, 4, 2, 1};
+            for (int k = 0; k < 5; k++)
                 for (int d = w[k] - 1; d >= 0; d--) *o++ = hx[(v[k] >> (4 * d)) & 15];
         }
         *o = 0;
